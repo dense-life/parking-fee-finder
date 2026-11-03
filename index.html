@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f7f4">
+    <meta name="description" content="목적지 주변 공영·민영 주차장을 찾고 예상 주차요금을 비교해 보세요.">
+    <title>주차장 찾기 · 주차요금 계산 | 생활도구</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="생활도구 홈">
+        <span class="brand-mark" aria-hidden="true">L</span>
+        <span>생활도구</span>
+      </a>
+      <span class="header-note">매일 쓰는 생활 정보, 더 쉽게</span>
+    </header>
+
+    <main id="top" class="page-shell">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow"><span class="eyebrow-dot"></span> PARKING, MADE SIMPLE</p>
+        <h1 id="page-title">주차장 찾기<span class="title-divider">·</span><br class="mobile-break">주차요금 계산</h1>
+        <p class="intro-copy">목적지 주변 주차장을 찾아보고, 머무를 시간에 따른 예상 요금을 비교해 보세요.</p>
+        <div class="data-badge"><span class="badge-icon" aria-hidden="true">✓</span> 공공데이터포털 전국 주차장 정보</div>
+      </section>
+
+      <section class="search-panel" aria-label="주차장 검색 조건">
+        <form id="search-form">
+          <label class="field-label" for="place-query">어디에 주차하시나요?</label>
+          <div class="search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <input id="place-query" name="query" type="search" autocomplete="off" placeholder="지역, 주소, 주차장 이름으로 검색" aria-describedby="query-help">
+              <button id="clear-query" class="clear-button" type="button" aria-label="검색어 지우기" hidden>×</button>
+            </div>
+            <button id="locate-button" class="location-button" type="button"><span aria-hidden="true">◎</span><span>내 위치</span></button>
+            <button class="search-button" type="submit">주차장 찾기 <span aria-hidden="true">→</span></button>
+          </div>
+          <p id="query-help" class="field-help">예: 서울 종로구, 부산 해운대구. 정확한 주변 검색은 ‘내 위치’를 이용하세요.</p>
+
+          <div class="filter-row">
+            <div class="duration-field">
+              <label class="field-label" for="duration">예상 주차 시간</label>
+              <div class="select-wrap">
+                <select id="duration" name="duration">
+                  <option value="30">30분</option>
+                  <option value="60">1시간</option>
+                  <option value="120" selected>2시간</option>
+                  <option value="180">3시간</option>
+                  <option value="240">4시간</option>
+                  <option value="360">6시간</option>
+                  <option value="480">8시간</option>
+                  <option value="720">12시간</option>
+                </select>
+                <span aria-hidden="true">⌄</span>
+              </div>
+            </div>
+            <div id="radius-field" class="radius-field" hidden>
+              <label class="field-label" for="radius">검색 반경</label>
+              <div class="select-wrap">
+                <select id="radius" name="radius">
+                  <option value="1">1km</option>
+                  <option value="3">3km</option>
+                  <option value="5" selected>5km</option>
+                  <option value="10">10km</option>
+                </select>
+                <span aria-hidden="true">⌄</span>
+              </div>
+            </div>
+            <label class="free-filter"><input id="free-only" type="checkbox"><span class="checkbox-art" aria-hidden="true"></span><span>무료 주차장만</span></label>
+            <div class="sort-field">
+              <label class="field-label" for="sort-by">정렬</label>
+              <div class="select-wrap">
+                <select id="sort-by" name="sort">
+                  <option value="recommended">추천순</option>
+                  <option value="distance">거리순</option>
+                  <option value="price">예상 요금순</option>
+                  <option value="spaces">주차면 많은 순</option>
+                </select>
+                <span aria-hidden="true">⌄</span>
+              </div>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="map-section" aria-labelledby="map-heading">
+        <div class="map-header">
+          <div>
+            <p class="section-kicker">PARKING MAP</p>
+            <h2 id="map-heading">지도에서 보기</h2>
+          </div>
+          <span id="map-caption" class="map-caption">검색 결과 주차장을 표시합니다</span>
+        </div>
+        <div id="parking-map" class="parking-map" role="application" aria-label="주차장 위치 지도"></div>
+        <div class="map-legend">
+          <span><i class="legend-parking" aria-hidden="true"></i> 주차장</span>
+          <span><i class="legend-user" aria-hidden="true"></i> 내 위치</span>
+          <span id="map-count">검색 후 지도에 위치가 표시됩니다</span>
+        </div>
+      </section>
+
+      <section class="results-section" aria-labelledby="results-heading">
+        <div class="results-header">
+          <div>
+            <p class="section-kicker">YOUR PARKING OPTIONS</p>
+            <h2 id="results-heading">주차장 <span id="result-count">검색 전</span></h2>
+          </div>
+          <span id="location-status" class="location-status" aria-live="polite"></span>
+        </div>
+
+        <div id="status-panel" class="status-panel" role="status" aria-live="polite">
+          <span class="status-icon" aria-hidden="true">⌖</span>
+          <div><strong>지역을 검색하거나 내 위치를 확인해 주세요.</strong><p>주차 요금과 운영시간은 제공기관의 등록 정보이며, 실시간 빈자리 정보는 아닙니다.</p></div>
+        </div>
+        <div id="results-list" class="results-list" aria-live="polite"></div>
+        <button id="load-more" class="load-more" type="button" hidden>주차장 더 보기</button>
+      </section>
+
+      <aside class="notice-card">
+        <div class="notice-symbol" aria-hidden="true">i</div>
+        <div>
+          <h2>요금과 운영시간은 방문 전 확인해 주세요</h2>
+          <p>지자체가 제공한 정보의 갱신 시점에 따라 현장과 다를 수 있습니다. 요금 정보가 불완전한 곳은 예상 금액 대신 요금 안내를 표시합니다. 실제 주차 가능 여부는 포함되지 않습니다. 위치는 주변 검색과 지도 표시를 위해 사용되며, 지도 타일 요청에는 대략적인 표시 지역이 전달될 수 있습니다.</p>
+        </div>
+      </aside>
+
+      <footer class="page-footer">
+        <div class="footer-meta"><span>DATA SOURCE</span><a href="https://www.data.go.kr/data/15012896/standard.do" target="_blank" rel="noreferrer">전국주차장정보표준데이터 ↗</a></div>
+        <p id="data-updated">데이터를 불러오는 중입니다.</p>
+        <p>공공데이터포털 자료를 활용한 생활 정보 도구입니다.</p>
+      </footer>
+    </main>
+    <div id="demo-banner" class="demo-banner" hidden>데모 미리보기 · 지도와 화면 확인용 예시 데이터이며 실제 주차장 정보가 아닙니다.</div>
+  </body>
+</html>
