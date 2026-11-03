@@ -7,6 +7,10 @@ const state = {
   shown: PAGE_SIZE,
   origin: null,
   query: "",
+  searchMode: "text",
+  geocoderUrl: "https://nominatim.openstreetmap.org/search",
+  geocodeCache: new Map(),
+  lastGeocodeRequestAt: 0,
   durationMinutes: 120,
   radiusKm: 5,
   freeOnly: false,
@@ -23,6 +27,9 @@ const state = {
 const elements = {
   form: document.querySelector("#search-form"),
   query: document.querySelector("#place-query"),
+  searchButton: document.querySelector("#search-button"),
+  placeResults: document.querySelector("#place-results"),
+  placeSelect: document.querySelector("#place-select"),
   clear: document.querySelector("#clear-query"),
   locate: document.querySelector("#locate-button"),
   duration: document.querySelector("#duration"),
@@ -339,10 +346,12 @@ function renderMap() {
   });
 
   if (state.origin) {
-    const userIcon = L.divIcon({ className: "user-marker", html: "<span>나</span>", iconSize: [34, 34], iconAnchor: [17, 17] });
-    state.userMarker = L.marker([state.origin.latitude, state.origin.longitude], { icon: userIcon, title: "내 위치", zIndexOffset: 1000 }).addTo(state.markerGroup);
-    state.userMarker.bindPopup("내 위치");
-    if (state.origin.accuracy && state.origin.accuracy < 1500) {
+    const markerText = state.origin.kind === "device" ? "나" : "목";
+    const markerTitle = state.origin.label || "검색 위치";
+    const userIcon = L.divIcon({ className: "user-marker", html: `<span>${markerText}</span>`, iconSize: [34, 34], iconAnchor: [17, 17] });
+    state.userMarker = L.marker([state.origin.latitude, state.origin.longitude], { icon: userIcon, title: markerTitle, zIndexOffset: 1000 }).addTo(state.markerGroup);
+    state.userMarker.bindPopup(markerTitle);
+    if (state.origin.kind === "device" && state.origin.accuracy && state.origin.accuracy < 1500) {
       state.userAccuracy = L.circle([state.origin.latitude, state.origin.longitude], {
         radius: Math.max(25, state.origin.accuracy),
         color: "#4285f4",
@@ -356,7 +365,7 @@ function renderMap() {
   }
 
   elements.mapCaption.textContent = state.origin
-    ? `내 위치 기준 ${state.radiusKm}km 안의 주차장`
+    ? `${state.origin.label || "검색 위치"} 기준 ${state.radiusKm}km 안의 주차장`
     : `${state.query || "조건"} 검색 결과`;
   const missingCoordinates = Math.max(0, state.filtered.length - coordinateItems.length);
   elements.mapCount.textContent = `${mapItems.length}곳 표시${missingCoordinates ? ` · 위치 미등록 ${missingCoordinates}곳` : ""}${coordinateItems.length > MAX_MAP_MARKERS ? ` · 지도는 가까운 ${MAX_MAP_MARKERS}곳까지` : ""}`;
@@ -372,14 +381,14 @@ function renderMap() {
 }
 
 function applySearch() {
-  state.query = clean(elements.query.value).toLocaleLowerCase("ko-KR");
+  state.query = clean(elements.query.value);
   state.durationMinutes = Number(elements.duration.value) || 120;
   state.radiusKm = Number(elements.radius.value) || 5;
   state.freeOnly = elements.freeOnly.checked;
   state.sort = elements.sort.value;
   state.shown = PAGE_SIZE;
 
-  const words = state.query.split(/\s+/).filter(Boolean);
+  const words = state.searchMode === "text" ? state.query.toLocaleLowerCase("ko-KR").split(/\s+/).filter(Boolean) : [];
   let results = state.items.filter((lot, index) => {
     lot.mapKey = index;
     if (words.length && !words.every((word) => `${lot.name} ${lot.address} ${lot.lotAddress} ${lot.category} ${lot.type}`.toLocaleLowerCase("ko-KR").includes(word))) return false;
@@ -417,7 +426,7 @@ function renderResults() {
     return;
   }
   if (!state.filtered.length) {
-    setStatus("검색 결과가 없습니다.", "지역명이나 주소를 짧게 바꾸어 다시 검색해 보세요. 예: ‘강남구’, ‘해운대구’.");
+    setStatus("주변 주차장을 찾지 못했습니다.", state.origin ? "검색 반경을 넓히거나 다른 장소를 입력해 보세요. 주차장 데이터에 좌표가 없는 곳은 주변 검색에서 제외됩니다." : "장소명·주소를 바꾸거나 ‘내 위치’를 사용해 보세요.");
     elements.more.hidden = true;
     return;
   }
@@ -426,6 +435,114 @@ function renderResults() {
   const remaining = Math.max(0, state.filtered.length - state.shown);
   elements.more.hidden = remaining === 0;
   if (remaining > 0) elements.more.textContent = `주차장 더 보기 (${remaining}곳)`;
+}
+
+function formatPlaceLabel(place) {
+  const primary = clean(place.name) || clean(place.display_name).split(",")[0];
+  const secondary = clean(place.display_name);
+  return secondary && !secondary.startsWith(primary) ? `${primary} · ${secondary}` : secondary || primary;
+}
+
+async function geocodePlace(query) {
+  const key = query.toLocaleLowerCase("ko-KR");
+  if (state.geocodeCache.has(key)) return state.geocodeCache.get(key);
+
+  const waitMs = Math.max(0, 1100 - (Date.now() - state.lastGeocodeRequestAt));
+  if (waitMs) await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+  state.lastGeocodeRequestAt = Date.now();
+
+  const url = new URL(state.geocoderUrl);
+  url.search = new URLSearchParams({
+    q: query,
+    format: "jsonv2",
+    addressdetails: "1",
+    countrycodes: "kr",
+    "accept-language": "ko",
+    layer: "address,poi",
+    limit: "5",
+  });
+  const response = await fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "strict-origin-when-cross-origin" });
+  if (!response.ok) throw new Error(`장소 검색 서비스 응답 오류 (${response.status})`);
+  const payload = await response.json();
+  const places = (Array.isArray(payload) ? payload : []).filter((place) => Number.isFinite(Number(place.lat)) && Number.isFinite(Number(place.lon)));
+  state.geocodeCache.set(key, places);
+  return places;
+}
+
+function setSearchOrigin(place) {
+  const label = place.label || formatPlaceLabel(place);
+  state.origin = {
+    latitude: Number(place.lat),
+    longitude: Number(place.lon),
+    accuracy: null,
+    label,
+    kind: "place",
+  };
+  state.searchMode = "nearby";
+  state.sort = "distance";
+  elements.sort.value = "distance";
+  elements.radiusField.hidden = false;
+  elements.locationStatus.textContent = `${label} 기준 · ${state.radiusKm}km · 거리순`;
+  applySearch();
+}
+
+async function searchDestination() {
+  const query = clean(elements.query.value);
+  elements.placeResults.hidden = true;
+  elements.radiusField.hidden = true;
+  if (state.demo) {
+    state.origin = null;
+    state.searchMode = "text";
+    elements.locationStatus.textContent = "";
+    applySearch();
+    return;
+  }
+  if (!query) {
+    state.origin = null;
+    state.searchMode = "text";
+    elements.placeResults.hidden = true;
+    elements.radiusField.hidden = true;
+    elements.locationStatus.textContent = "";
+    applySearch();
+    return;
+  }
+
+  elements.searchButton.disabled = true;
+  elements.searchButton.setAttribute("aria-busy", "true");
+  elements.locationStatus.textContent = "장소 검색 중…";
+  try {
+    const places = await geocodePlace(query);
+    if (!places.length) {
+      state.origin = null;
+      state.searchMode = "text";
+      elements.radiusField.hidden = true;
+      elements.locationStatus.textContent = "장소를 찾지 못해 주차장 이름·주소로 검색합니다.";
+      applySearch();
+      if (!state.filtered.length) setStatus("장소를 찾지 못했습니다.", "장소명이나 주소를 조금 더 구체적으로 입력하거나 ‘내 위치’를 사용해 보세요.", true);
+      return;
+    }
+
+    elements.placeSelect.replaceChildren();
+    places.forEach((place, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = formatPlaceLabel(place);
+      elements.placeSelect.append(option);
+    });
+    elements.placeResults.hidden = places.length < 2;
+    setSearchOrigin(places[0]);
+  } catch (error) {
+    state.origin = null;
+    state.searchMode = "text";
+    elements.radiusField.hidden = true;
+    elements.locationStatus.textContent = "장소 검색에 연결할 수 없습니다.";
+    applySearch();
+    setStatus("장소 검색을 이용할 수 없습니다.", "인터넷 연결을 확인하거나 지역명·주차장 이름으로 다시 검색해 주세요.", true);
+    console.error(error);
+  } finally {
+    elements.searchButton.disabled = false;
+    elements.searchButton.removeAttribute("aria-busy");
+  }
 }
 
 async function loadData() {
@@ -437,6 +554,15 @@ async function loadData() {
     const payload = await response.json();
     state.items = (Array.isArray(payload) ? payload : payload.items || []).map(normalizeItem).filter((lot) => lot.name !== "이름 정보 없음" || lot.address);
     state.meta = Array.isArray(payload) ? null : payload.meta || null;
+    try {
+      const configResponse = await fetch("data/app_config.json", { cache: "no-store" });
+      if (configResponse.ok) {
+        const config = await configResponse.json();
+        if (typeof config.geocoderUrl === "string" && config.geocoderUrl.startsWith("https://")) state.geocoderUrl = config.geocoderUrl;
+      }
+    } catch (error) {
+      console.warn("기본 장소 검색 설정을 사용합니다.", error);
+    }
     if (state.demo) {
       elements.demoBanner.hidden = false;
       elements.query.value = "서울 중구";
@@ -472,6 +598,12 @@ function requestLocation() {
   navigator.geolocation.getCurrentPosition(
     (position) => {
       state.origin = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy };
+      state.origin.label = "내 위치";
+      state.origin.kind = "device";
+      state.searchMode = "nearby";
+      elements.query.value = "";
+      elements.clear.hidden = true;
+      elements.placeResults.hidden = true;
       elements.locationStatus.textContent = `내 위치 기준 · ${state.radiusKm}km · 거리순`;
       elements.radiusField.hidden = false;
       elements.sort.value = "distance";
@@ -489,20 +621,31 @@ function requestLocation() {
 elements.form.addEventListener("submit", (event) => {
   event.preventDefault();
   state.origin = null;
-  elements.radiusField.hidden = true;
+  state.searchMode = "text";
+  elements.placeResults.hidden = true;
   elements.locationStatus.textContent = "";
-  applySearch();
+  searchDestination();
 });
 elements.query.addEventListener("input", () => { elements.clear.hidden = !elements.query.value; });
 elements.clear.addEventListener("click", () => {
   elements.query.value = "";
   elements.clear.hidden = true;
+  elements.placeResults.hidden = true;
+  elements.radiusField.hidden = true;
+  state.origin = null;
+  state.searchMode = "text";
+  elements.locationStatus.textContent = "";
+  applySearch();
   elements.query.focus();
+});
+elements.placeSelect.addEventListener("change", () => {
+  const place = state.geocodeCache.get(clean(elements.query.value).toLocaleLowerCase("ko-KR"))?.[Number(elements.placeSelect.value)];
+  if (place) setSearchOrigin(place);
 });
 elements.locate.addEventListener("click", requestLocation);
 elements.duration.addEventListener("change", applySearch);
 elements.radius.addEventListener("change", () => {
-  elements.locationStatus.textContent = `내 위치 기준 · ${elements.radius.value}km · 거리순`;
+  elements.locationStatus.textContent = `${state.origin?.label || "검색 위치"} 기준 · ${elements.radius.value}km · 거리순`;
   applySearch();
 });
 elements.freeOnly.addEventListener("change", applySearch);
