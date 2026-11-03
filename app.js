@@ -196,11 +196,9 @@ function formatTime(open, close) {
 }
 
 function openMapUrl(lot) {
-  const query = `${lot.name} ${lot.address}`.trim();
-  if (isCoordValid(lot)) {
-    return `https://map.naver.com/p/search/${encodeURIComponent(query)}`;
-  }
-  return `https://map.naver.com/p/search/${encodeURIComponent(query)}`;
+  const address = clean(lot.address || lot.lotAddress);
+  if (!address) return "https://map.naver.com/";
+  return `https://map.naver.com/p/search/${encodeURIComponent(address)}`;
 }
 
 function createCard(lot, index) {
